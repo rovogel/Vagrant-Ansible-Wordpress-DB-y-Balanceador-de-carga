@@ -1,0 +1,206 @@
+---
+- hosts: balanceadores
+  tasks:
+
+  - name: actualizar cache (apt-get update)
+    apt: update_cache=yes cache_valid_time=3600
+    sudo: yes
+
+  - name: instalar corosync
+    sudo: yes
+    apt: name=corosync state=present
+
+  - name: instalar pacemaker
+    sudo: yes
+    apt: name=pacemaker state=present
+    notify: restart pacemaker
+    
+  - name: copiar la clave al directorio de corosync
+    sudo: yes
+    copy: src=plantillas/corosync/authkey dest=/etc/corosync/authkey owner=root group=root mode=400
+    notify: restart corosync
+
+  - name: configurar la red del latido
+    sudo: yes
+    copy: src=plantillas/corosync/corosync.conf dest=/etc/corosync/corosync.conf owner=root group=root mode=644
+    notify: restart corosync
+
+  - name: configurar corosync archivo default
+    sudo: yes
+    copy: src=plantillas/default/corosync dest=/etc/default/corosync owner=root group=root mode=644
+
+  - name: permitir a corosync iniciar pacemaker
+    sudo: yes
+    copy: src=plantillas/corosync/pcmk dest=/etc/corosync/service.d/pcmk owner=root group=root mode=777
+    notify: restart corosync
+
+  - name: reiniciar corosync
+    sudo: yes
+    command: /usr/sbin/service corosync restart
+
+  - name: iniciar pacemaker
+    sudo: yes
+    command: /usr/sbin/service pacemaker start
+
+  - name: asegurar que corosync se esta ejecutando
+    sudo: yes
+    service: name=corosync state=started
+
+  - name: asegurar que pacemaker se esta ejecutando
+    sudo: yes
+    service: name=pacemaker state=started
+
+  - name: Instalar haproxy
+    apt: name=haproxy state=present
+    sudo: yes
+
+  - name: Permtir a haproxy iniciarse con el sistema
+    sudo: yes
+    replace: dest='/etc/default/haproxy' regexp='ENABLED=0' replace='ENABLED=1'
+
+  - name: cargar plantilla de configuracion
+    sudo: yes
+    copy: src=plantillas/HAProxy/haproxy.cfg dest=/etc/haproxy/haproxy.cfg owner=root group=root mode=777
+    notify: restart haproxy
+
+  - name: instalar recurso haproxy heartbeat
+    command: /usr/bin/curl -0 https://raw.githubusercontent.com/thisismitch/cluster-agents/master/haproxy arg1 arg2
+    args:
+      chdir: /usr/lib/ocf/resource.d/heartbeat/
+      creates: /usr/lib/ocf/resource.d/heartbeat/haproxy
+
+  - name: recurso haproxy como ejecutable
+    command: /bin/chmod +x /usr/lib/ocf/resource.d/heartbeat/haproxy arg1
+    args:
+      creates: /usr/lib/ocf/resource.d/heartbeat/haproxy
+
+#  - name: instalar recurso ocf haproxy
+#    sudo: yes
+#    command: /usr/bin/curl -0 https://raw.githubusercontent.com/thisismitch/cluster-agents/master/haproxy chdir='/usr/lib/ocf/resource.d/heartbeat'
+
+  handlers:
+  - name: restart corosync
+    sudo: yes
+    service: name=corosync state=restarted
+  - name: restart pacemaker
+    sudo: yes
+    service: name=pacemaker state=restarted
+
+- hosts: servidorLB1
+  tasks:
+
+  - name: asegurar que corosync se esta ejecutando
+    sudo: yes
+    service: name=corosync state=started
+
+  - name: asegurar que pacemaker se esta ejecutando
+    sudo: yes
+    service: name=pacemaker state=started
+
+  - name: desabilitar stonith
+    sudo: yes
+    command: /usr/sbin/crm configure property stonith-enabled=false
+ 
+ - name: setear quorum desabilitado
+    sudo: yes
+    command: /usr/sbin/crm configure property no-quorum-policy=ignore
+
+  - name: evitar que los recursos se muevan
+    sudo: yes
+    command: /usr/sbin/crm configure property default-resource-stickiness=100
+
+  - name: agregar recurso IPflotante
+    sudo: yes
+    command: /usr/sbin/crm configure primitive IP_Flotante ocf:heartbeat:IPaddr2 params ip="192.168.100.100" nic="eth1" op monitor interval="10s" meta is-managed="true"
+
+  - name: agregar recurso HAProxy
+    sudo: yes
+    command: /usr/sbin/crm configure primitive haproxy ocf:heartbeat:haproxy op monitor interval="15s"
+
+  - name: HAProxy y Ipflotante en mismo nodo
+    sudo: yes
+    command: /usr/sbin/crm configure colocation haproxy-con-IP inf':' haproxy IP_Flotante
+
+  - name: cambiar orden de los recursos
+    sudo: yes
+    command: /usr/sbin/crm configure order orden_inicio inf':' IP_Flotante haproxy
+
+  - name: limpiar recurso haproxy
+    sudo: yes
+    command: /usr/sbin/crm resource cleanup haproxy
+
+
+
+
+
+#- hosts: balanceadores
+#  tasks:
+
+#  - name: asegurar que pacemaker se esta ejecutando
+#    sudo: yes
+#    service: name=pacemaker state=started    
+
+#  - name: reiniciar corosync
+#    sudo: yes
+#    command: /usr/sbin/service corosync restart
+
+#  - name: iniciar pacemaker
+#    sudo: yes
+#    command: /usr/sbin/service pacemaker start
+    
+#  - name: agregar direccion donde se escuchará el heartbeat
+#    replace: dest='/etc/corosync/corosync.conf' regexp='127.0.0.1' replace='192.10.10.0'
+#    sudo: yes
+    
+#  - name: corosync al inicio
+#    replace: dest='/etc/default/corosync' regexp='START=no' replace='START=yes'
+#    sudo: yes
+    
+#  - name: desabilitamos stonith
+#    command: crm configure property stonith-enabled=false
+#    sudo: yes
+    
+#  - name: desabilitamos quorum
+#    command: crm configure property no-quorum-policy=ignore
+#    sudo: yes
+    
+#  - name: desabilitamos quorum
+#    command: crm configure rsc_defaults resource-stickiness=100
+#    sudo: yes      
+
+#  - name: reiniciar corosync
+#    service: name=corosync state=restarted
+#    sudo: yes
+
+#  - name: reiniciar haproxy
+#    service: name=haproxy state=restarted
+#    sudo: yes
+
+#  - name: comprobar si corre haproxy
+#    service: name=haproxy state=running
+#    sudo: yes
+
+#  - name: comprobar si corre corosync
+#    service: name=corosync state=running
+#    sudo: yes
+
+#  - name: comprobar si corre pacemaker
+#    service: name=corosync state=started
+#    sudo: yes
+
+#  - name: comprobar si corre keepalive
+#    service: name=keepalived state=running
+#    sudo: yes
+
+    
+#  - name: crear clave de autenticacion en nodo 1
+#    shell: corosync-keygen
+#    sudo: yes
+    
+#  - name: copiar clave al directorio compartido
+#    copy: src=/etc/corosync/authkey dest=~ mode=0777
+#    sudo: yes
+    
+#  - name: cambiar privilegios de la clave
+#    sudo: yes
+#    shell: chmod 777 /etc/corosync/authkey

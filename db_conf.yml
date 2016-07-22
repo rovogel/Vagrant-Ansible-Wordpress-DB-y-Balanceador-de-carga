@@ -1,0 +1,41 @@
+---
+- hosts: servidordb
+  sudo: true
+  tasks:
+
+  - name: actualizar cache (apt-get update)
+    apt: update_cache=yes cache_valid_time=3600
+    sudo: yes
+
+  - name: instalar SQL server
+    apt: name=mysql-server state=present
+    sudo: yes
+
+  - name: instalar modulo python
+    apt: name=python-mysqldb state=present
+    sudo: yes
+
+  - name: habilitar la conexion del servidor para todos los clientes
+    lineinfile: dest=/etc/mysql/my.cnf regexp="bind-address" line="bind-address = 192.168.100.30"
+    sudo: yes
+
+  - name: reiniciar el servicio sql
+    service: name=mysql state=restarted
+    sudo: yes
+
+  - name: verificar si sql está corriendo
+    service: name=mysql state=running
+    sudo: yes
+
+  - name: crear base de datos
+    sudo: yes
+    mysql_db: name=wordpress 
+              state=present
+
+  - name: crear usuario con todos los privilegios sobre la base de datos
+    sudo: yes
+    mysql_user: name=wordpress
+                password=wordpress
+                priv=*.*:ALL
+                state=present
+   #shell: GRANT all ON * to usuario identified by 'wordpress' with GRANT OPTION
